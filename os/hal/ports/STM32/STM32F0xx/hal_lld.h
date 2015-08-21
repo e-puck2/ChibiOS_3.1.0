@@ -247,6 +247,7 @@
 #define STM32_CECSW_MASK        (1 << 6)    /**< CEC clock source mask.     */
 #define STM32_CECSW_HSI         (0 << 6)    /**< CEC clock is HSI/244.      */
 #define STM32_CECSW_LSE         (1 << 6)    /**< CEC clock is LSE.          */
+#define STM32_CECSW_OFF         0xFFFFFFFF  /**< CEC clock is not required. */
 #define STM32_USBSW_MASK        (1 << 7)    /**< USB clock source mask.     */
 #define STM32_USBSW_HSI48       (0 << 7)    /**< USB clock is HSI48.        */
 #define STM32_USBSW_PCLK        (1 << 7)    /**< USB clock is PCLK.         */
@@ -798,6 +799,8 @@
 #define STM32_CECCLK                STM32_HSICLK
 #elif STM32_CECSW == STM32_CECSW_LSE
 #define STM32_CECCLK                STM32_LSECLK
+#elif STM32_CECSW == STM32_CECSW_OFF
+#define STM32_CECCLK                0
 #else
 #error "invalid source selected for CEC clock"
 #endif
@@ -805,9 +808,9 @@
 /**
  * @brief   I2C1 frequency.
  */
-#if (STM32_I2CSW == STM32_I2C1SW_HSI) || defined(__DOXYGEN__)
+#if (STM32_I2C1SW == STM32_I2C1SW_HSI) || defined(__DOXYGEN__)
 #define STM32_I2C1CLK               STM32_HSICLK
-#elif STM32_I2CSW == STM32_I2C1SW_SYSCLK
+#elif STM32_I2C1SW == STM32_I2C1SW_SYSCLK
 #define STM32_I2C1CLK               STM32_SYSCLK
 #else
 #error "invalid source selected for I2C1 clock"
@@ -820,9 +823,9 @@
 #define STM32_USART1CLK             STM32_PCLK
 #elif STM32_USART1SW == STM32_USART1SW_SYSCLK
 #define STM32_USART1CLK             STM32_SYSCLK
-#elif STM32_USART1SW == STM32_USART1SW_LSECLK
+#elif STM32_USART1SW == STM32_USART1SW_LSE
 #define STM32_USART1CLK             STM32_LSECLK
-#elif STM32_USART1SW == STM32_USART1SW_HSICLK
+#elif STM32_USART1SW == STM32_USART1SW_HSI
 #define STM32_USART1CLK             STM32_HSICLK
 #else
 #error "invalid source selected for USART1 clock"

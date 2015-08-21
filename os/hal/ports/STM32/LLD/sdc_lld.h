@@ -109,7 +109,7 @@
 #error "SDIO not present in the selected device"
 #endif
 
-#if !CORTEX_IS_VALID_KERNEL_PRIORITY(STM32_SDC_SDIO_IRQ_PRIORITY)
+#if !OSAL_IRQ_IS_VALID_PRIORITY(STM32_SDC_SDIO_IRQ_PRIORITY)
 #error "Invalid IRQ priority assigned to SDIO"
 #endif
 
@@ -159,6 +159,10 @@
 #error "SDIO requires STM32_CLOCK48_REQUIRED to be enabled"
 #endif
 
+#if STM32_PLL48CLK != 48000000
+#error "invalid STM32_PLL48CLK clock value"
+#endif
+
 #define STM32_SDC_WRITE_TIMEOUT                                             \
   (((STM32_PLL48CLK / (STM32_SDIO_DIV_HS + 2)) / 1000) *                    \
    STM32_SDC_WRITE_TIMEOUT_MS)
@@ -182,23 +186,6 @@
 /*===========================================================================*/
 
 /**
- * @brief   Type of SDIO bus mode.
- */
-typedef enum {
-  SDC_MODE_1BIT = 0,
-  SDC_MODE_4BIT,
-  SDC_MODE_8BIT
-} sdcbusmode_t;
-
-/**
- * @brief   Max supported clock.
- */
-typedef enum {
-  SDC_CLK_25MHz = 0,
-  SDC_CLK_50MHz,
-} sdcbusclk_t;
-
-/**
  * @brief   Type of card flags.
  */
 typedef uint32_t sdcmode_t;
@@ -219,18 +206,19 @@ typedef struct SDCDriver SDCDriver;
  */
 typedef struct {
   /**
-   * @brief   Bus width (board specific).
-   */
-  sdcbusmode_t  bus_width;
-  /**
-   * @brief   Working area for memory consuming operations during init
-   *          procedures (temporal storage for EXT_CSD, etc.).
+   * @brief   Working area for memory consuming operations.
    * @note    Buffer must be word aligned and big enough to store 512 bytes.
-   * @note    It is mandatory for MMC bigger than 2GB.
-   * @note    Memory can be freed after @p sdcConnect return. Do not
-   *          forget to set this pointer to @p NULL after freeing.
+   * @note    It is mandatory for detecting MMC cards bigger than 2GB else it
+   *          can be @p NULL. SD cards do NOT need it.
+   * @note    Memory pointed by this buffer is only used by @p sdcConnect(),
+   *          afterward it can be reused for other purposes.
    */
   uint8_t       *scratchpad;
+  /**
+   * @brief   Bus width.
+   */
+  sdcbusmode_t  bus_width;
+  /* End of the mandatory fields.*/
 } SDCConfig;
 
 /**
@@ -288,7 +276,7 @@ struct SDCDriver {
   const stm32_dma_stream_t  *dma;
   /**
    * @brief     Pointer to the SDIO registers block.
-   * @note      Needed for dubugging aid.
+   * @note      Needed for debugging aid.
    */
   SDIO_TypeDef              *sdio;
 };

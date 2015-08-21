@@ -22,10 +22,6 @@
  * @{
  */
 
-/*
- TODO: Try preerase blocks before writing (ACMD23).
- */
-
 #include <string.h>
 
 #include "hal.h"
@@ -61,62 +57,21 @@ static union {
 } u;
 #endif /* STM32_SDC_SDIO_UNALIGNED_SUPPORT */
 
+
+/**
+ * @brief   SDIO default configuration.
+ */
+static const SDCConfig sdc_default_cfg = {
+  NULL,
+  SDC_MODE_4BIT
+};
+
 /*===========================================================================*/
 /* Driver local functions.                                                   */
 /*===========================================================================*/
 
 /**
- * @brief   Prepares MCU to handle read transaction.
- *
- * @param[in] sdcp      pointer to the @p SDCDriver object
- * @param[out] buf      pointer to the read buffer
- * @param[in] n         number of blocks to read
- *
- * @return              The operation status.
- * @retval HAL_SUCCESS  operation succeeded.
- * @retval HAL_FAILED   operation failed.
- *
- * @notapi
- */
-static bool sdc_lld_prepare_read_mcu_blocks(SDCDriver *sdcp,
-                                            uint8_t *buf, uint32_t blocks) {
-
-  osalDbgCheck(blocks < 0x1000000 / MMCSD_BLOCK_SIZE);
-
-  SDIO->DTIMER = STM32_SDC_READ_TIMEOUT;
-
-  /* Checks for errors and waits for the card to be ready for reading.*/
-  if (_sdc_wait_for_transfer_state(sdcp))
-    return HAL_FAILED;
-
-  /* Prepares the DMA channel for writing.*/
-  dmaStreamSetMemory0(sdcp->dma, buf);
-  dmaStreamSetTransactionSize(sdcp->dma,
-                              (blocks * MMCSD_BLOCK_SIZE) / sizeof (uint32_t));
-  dmaStreamSetMode(sdcp->dma, sdcp->dmamode | STM32_DMA_CR_DIR_P2M);
-  dmaStreamEnable(sdcp->dma);
-
-  /* Setting up data transfer.*/
-  SDIO->ICR   = STM32_SDIO_ICR_ALL_FLAGS;
-  SDIO->MASK  = SDIO_MASK_DCRCFAILIE |
-                SDIO_MASK_DTIMEOUTIE |
-                SDIO_MASK_STBITERRIE |
-                SDIO_MASK_RXOVERRIE |
-                SDIO_MASK_DATAENDIE;
-  SDIO->DLEN  = blocks * MMCSD_BLOCK_SIZE;
-
-  /* Transaction starts just after DTEN bit setting.*/
-  SDIO->DCTRL = SDIO_DCTRL_DTDIR |
-                SDIO_DCTRL_DBLOCKSIZE_3 |
-                SDIO_DCTRL_DBLOCKSIZE_0 |
-                SDIO_DCTRL_DMAEN |
-                SDIO_DCTRL_DTEN;
-
-  return HAL_SUCCESS;
-}
-
-/**
- * @brief   Prepares MCU to handle read transaction.
+ * @brief   Prepares to handle read transaction.
  * @details Designed for read special registers from card.
  *
  * @param[in] sdcp      pointer to the @p SDCDriver object
@@ -129,11 +84,11 @@ static bool sdc_lld_prepare_read_mcu_blocks(SDCDriver *sdcp,
  *
  * @notapi
  */
-static bool sdc_lld_prepare_read_mcu_bytes(SDCDriver *sdcp,
-                                           uint8_t *buf, uint32_t bytes) {
+static bool sdc_lld_prepare_read_bytes(SDCDriver *sdcp,
+                                       uint8_t *buf, uint32_t bytes) {
   osalDbgCheck(bytes < 0x1000000);
 
-  SDIO->DTIMER = STM32_SDC_READ_TIMEOUT;
+  sdcp->sdio->DTIMER = STM32_SDC_READ_TIMEOUT;
 
   /* Checks for errors and waits for the card to be ready for reading.*/
   if (_sdc_wait_for_transfer_state(sdcp))
@@ -146,19 +101,19 @@ static bool sdc_lld_prepare_read_mcu_bytes(SDCDriver *sdcp,
   dmaStreamEnable(sdcp->dma);
 
   /* Setting up data transfer.*/
-  SDIO->ICR   = STM32_SDIO_ICR_ALL_FLAGS;
-  SDIO->MASK  = SDIO_MASK_DCRCFAILIE |
-                SDIO_MASK_DTIMEOUTIE |
-                SDIO_MASK_STBITERRIE |
-                SDIO_MASK_RXOVERRIE |
-                SDIO_MASK_DATAENDIE;
-  SDIO->DLEN  = bytes;
+  sdcp->sdio->ICR   = STM32_SDIO_ICR_ALL_FLAGS;
+  sdcp->sdio->MASK  = SDIO_MASK_DCRCFAILIE |
+                      SDIO_MASK_DTIMEOUTIE |
+                      SDIO_MASK_STBITERRIE |
+                      SDIO_MASK_RXOVERRIE |
+                      SDIO_MASK_DATAENDIE;
+  sdcp->sdio->DLEN  = bytes;
 
   /* Transaction starts just after DTEN bit setting.*/
-  SDIO->DCTRL = SDIO_DCTRL_DTDIR |
-                SDIO_DCTRL_DTMODE | /* multibyte data transfer */
-                SDIO_DCTRL_DMAEN |
-                SDIO_DCTRL_DTEN;
+  sdcp->sdio->DCTRL = SDIO_DCTRL_DTDIR |
+                      SDIO_DCTRL_DTMODE |   /* multibyte data transfer */
+                      SDIO_DCTRL_DMAEN |
+                      SDIO_DCTRL_DTEN;
 
   return HAL_SUCCESS;
 }
@@ -177,8 +132,8 @@ static bool sdc_lld_prepare_read_mcu_bytes(SDCDriver *sdcp,
  *
  * @notapi
  */
-static bool sdc_lld_prepare_read_card(SDCDriver *sdcp, uint32_t startblk,
-                                      uint32_t n, uint32_t *resp) {
+static bool sdc_lld_prepare_read(SDCDriver *sdcp, uint32_t startblk,
+                                 uint32_t n, uint32_t *resp) {
 
   /* Driver handles data in 512 bytes blocks (just like HC cards). But if we
      have not HC card than we must convert address from blocks to bytes.*/
@@ -256,9 +211,9 @@ static bool sdc_lld_wait_transaction_end(SDCDriver *sdcp, uint32_t n,
   /* Note the mask is checked before going to sleep because the interrupt
      may have occurred before reaching the critical zone.*/
   osalSysLock();
-  if (SDIO->MASK != 0)
+  if (sdcp->sdio->MASK != 0)
     osalThreadSuspendS(&sdcp->thread);
-  if ((SDIO->STA & SDIO_STA_DATAEND) == 0) {
+  if ((sdcp->sdio->STA & SDIO_STA_DATAEND) == 0) {
     osalSysUnlock();
     return HAL_FAILED;
   }
@@ -271,8 +226,8 @@ static bool sdc_lld_wait_transaction_end(SDCDriver *sdcp, uint32_t n,
   /* DMA event flags must be manually cleared.*/
   dmaStreamClearInterrupt(sdcp->dma);
 
-  SDIO->ICR = STM32_SDIO_ICR_ALL_FLAGS;
-  SDIO->DCTRL = 0;
+  sdcp->sdio->ICR = STM32_SDIO_ICR_ALL_FLAGS;
+  sdcp->sdio->DCTRL = 0;
   osalSysUnlock();
 
   /* Wait until interrupt flags to be cleared.*/
@@ -283,8 +238,8 @@ static bool sdc_lld_wait_transaction_end(SDCDriver *sdcp, uint32_t n,
      disabled and cleared.*/
   dmaWaitCompletion(sdcp->dma);
 
-  SDIO->ICR = STM32_SDIO_ICR_ALL_FLAGS;
-  SDIO->DCTRL = 0;
+  sdcp->sdio->ICR = STM32_SDIO_ICR_ALL_FLAGS;
+  sdcp->sdio->DCTRL = 0;
   osalSysUnlock();
 #endif
 
@@ -336,13 +291,13 @@ static void sdc_lld_collect_errors(SDCDriver *sdcp, uint32_t sta) {
 static void sdc_lld_error_cleanup(SDCDriver *sdcp,
                                   uint32_t n,
                                   uint32_t *resp) {
-  uint32_t sta = SDIO->STA;
+  uint32_t sta = sdcp->sdio->STA;
 
   dmaStreamClearInterrupt(sdcp->dma);
   dmaStreamDisable(sdcp->dma);
-  SDIO->ICR   = STM32_SDIO_ICR_ALL_FLAGS;
-  SDIO->MASK  = 0;
-  SDIO->DCTRL = 0;
+  sdcp->sdio->ICR   = STM32_SDIO_ICR_ALL_FLAGS;
+  sdcp->sdio->MASK  = 0;
+  sdcp->sdio->DCTRL = 0;
   sdc_lld_collect_errors(sdcp, sta);
   if (n > 1)
     sdc_lld_send_cmd_short_crc(sdcp, MMCSD_CMD_STOP_TRANSMISSION, 0, resp);
@@ -393,9 +348,7 @@ void sdc_lld_init(void) {
   sdcObjectInit(&SDCD1);
   SDCD1.thread = NULL;
   SDCD1.dma    = STM32_DMA_STREAM(STM32_SDC_SDIO_DMA_STREAM);
-#if CH_DBG_ENABLE_ASSERTS
   SDCD1.sdio   = SDIO;
-#endif
 }
 
 /**
@@ -406,6 +359,11 @@ void sdc_lld_init(void) {
  * @notapi
  */
 void sdc_lld_start(SDCDriver *sdcp) {
+
+  /* Checking configuration, using a default if NULL has been passed.*/
+  if (sdcp->config == NULL) {
+    sdcp->config = &sdc_default_cfg;
+  }
 
   sdcp->dmamode = STM32_DMA_CR_CHSEL(DMA_CHANNEL) |
                   STM32_DMA_CR_PL(STM32_SDC_SDIO_DMA_PRIORITY) |
@@ -424,7 +382,7 @@ void sdc_lld_start(SDCDriver *sdcp) {
     bool b;
     b = dmaStreamAllocate(sdcp->dma, STM32_SDC_SDIO_IRQ_PRIORITY, NULL, NULL);
     osalDbgAssert(!b, "stream already allocated");
-    dmaStreamSetPeripheral(sdcp->dma, &SDIO->FIFO);
+    dmaStreamSetPeripheral(sdcp->dma, &sdcp->sdio->FIFO);
 #if (defined(STM32F4XX) || defined(STM32F2XX))
     dmaStreamSetFIFO(sdcp->dma, STM32_DMA_FCR_DMDIS | STM32_DMA_FCR_FTH_FULL);
 #endif
@@ -433,10 +391,10 @@ void sdc_lld_start(SDCDriver *sdcp) {
   }
 
   /* Configuration, card clock is initially stopped.*/
-  SDIO->POWER  = 0;
-  SDIO->CLKCR  = 0;
-  SDIO->DCTRL  = 0;
-  SDIO->DTIMER = 0;
+  sdcp->sdio->POWER  = 0;
+  sdcp->sdio->CLKCR  = 0;
+  sdcp->sdio->DCTRL  = 0;
+  sdcp->sdio->DTIMER = 0;
 }
 
 /**
@@ -451,10 +409,10 @@ void sdc_lld_stop(SDCDriver *sdcp) {
   if (sdcp->state != BLK_STOP) {
 
     /* SDIO deactivation.*/
-    SDIO->POWER  = 0;
-    SDIO->CLKCR  = 0;
-    SDIO->DCTRL  = 0;
-    SDIO->DTIMER = 0;
+    sdcp->sdio->POWER  = 0;
+    sdcp->sdio->CLKCR  = 0;
+    sdcp->sdio->DCTRL  = 0;
+    sdcp->sdio->DTIMER = 0;
 
     /* Clock deactivation.*/
     nvicDisableVector(STM32_SDIO_NUMBER);
@@ -472,12 +430,10 @@ void sdc_lld_stop(SDCDriver *sdcp) {
  */
 void sdc_lld_start_clk(SDCDriver *sdcp) {
 
-  (void)sdcp;
-
   /* Initial clock setting: 400kHz, 1bit mode.*/
-  SDIO->CLKCR  = STM32_SDIO_DIV_LS;
-  SDIO->POWER |= SDIO_POWER_PWRCTRL_0 | SDIO_POWER_PWRCTRL_1;
-  SDIO->CLKCR |= SDIO_CLKCR_CLKEN;
+  sdcp->sdio->CLKCR  = STM32_SDIO_DIV_LS;
+  sdcp->sdio->POWER |= SDIO_POWER_PWRCTRL_0 | SDIO_POWER_PWRCTRL_1;
+  sdcp->sdio->CLKCR |= SDIO_CLKCR_CLKEN;
 
   /* Clock activation delay.*/
   osalThreadSleep(MS2ST(STM32_SDC_CLOCK_ACTIVATION_DELAY));
@@ -487,19 +443,23 @@ void sdc_lld_start_clk(SDCDriver *sdcp) {
  * @brief   Sets the SDIO clock to data mode (25MHz or less).
  *
  * @param[in] sdcp      pointer to the @p SDCDriver object
+ * @param[in] clk       the clock mode
  *
  * @notapi
  */
 void sdc_lld_set_data_clk(SDCDriver *sdcp, sdcbusclk_t clk) {
-
-  (void)sdcp;
-
+#if 0
   if (SDC_CLK_50MHz == clk) {
-    SDIO->CLKCR = (SDIO->CLKCR & 0xFFFFFF00) | STM32_SDIO_DIV_HS
-                                             | SDIO_CLKCR_BYPASS;
+    sdcp->sdio->CLKCR = (sdcp->sdio->CLKCR & 0xFFFFFF00U) | STM32_SDIO_DIV_HS
+                                                          | SDIO_CLKCR_BYPASS;
   }
   else
-    SDIO->CLKCR = (SDIO->CLKCR & 0xFFFFFF00) | STM32_SDIO_DIV_HS;
+    sdcp->sdio->CLKCR = (sdcp->sdio->CLKCR & 0xFFFFFF00U) | STM32_SDIO_DIV_HS;
+#else
+  (void)clk;
+
+  sdcp->sdio->CLKCR = (sdcp->sdio->CLKCR & 0xFFFFFF00U) | STM32_SDIO_DIV_HS;
+#endif
 }
 
 /**
@@ -511,10 +471,8 @@ void sdc_lld_set_data_clk(SDCDriver *sdcp, sdcbusclk_t clk) {
  */
 void sdc_lld_stop_clk(SDCDriver *sdcp) {
 
-  (void)sdcp;
-
-  SDIO->CLKCR = 0;
-  SDIO->POWER = 0;
+  sdcp->sdio->CLKCR = 0;
+  sdcp->sdio->POWER = 0;
 }
 
 /**
@@ -526,19 +484,17 @@ void sdc_lld_stop_clk(SDCDriver *sdcp) {
  * @notapi
  */
 void sdc_lld_set_bus_mode(SDCDriver *sdcp, sdcbusmode_t mode) {
-  uint32_t clk = SDIO->CLKCR & ~SDIO_CLKCR_WIDBUS;
-
-  (void)sdcp;
+  uint32_t clk = sdcp->sdio->CLKCR & ~SDIO_CLKCR_WIDBUS;
 
   switch (mode) {
   case SDC_MODE_1BIT:
-    SDIO->CLKCR = clk;
+    sdcp->sdio->CLKCR = clk;
     break;
   case SDC_MODE_4BIT:
-    SDIO->CLKCR = clk | SDIO_CLKCR_WIDBUS_0;
+    sdcp->sdio->CLKCR = clk | SDIO_CLKCR_WIDBUS_0;
     break;
   case SDC_MODE_8BIT:
-    SDIO->CLKCR = clk | SDIO_CLKCR_WIDBUS_1;
+    sdcp->sdio->CLKCR = clk | SDIO_CLKCR_WIDBUS_1;
     break;
   }
 }
@@ -554,13 +510,11 @@ void sdc_lld_set_bus_mode(SDCDriver *sdcp, sdcbusmode_t mode) {
  */
 void sdc_lld_send_cmd_none(SDCDriver *sdcp, uint8_t cmd, uint32_t arg) {
 
-  (void)sdcp;
-
-  SDIO->ARG = arg;
-  SDIO->CMD = (uint32_t)cmd | SDIO_CMD_CPSMEN;
-  while ((SDIO->STA & SDIO_STA_CMDSENT) == 0)
+  sdcp->sdio->ARG = arg;
+  sdcp->sdio->CMD = (uint32_t)cmd | SDIO_CMD_CPSMEN;
+  while ((sdcp->sdio->STA & SDIO_STA_CMDSENT) == 0)
     ;
-  SDIO->ICR = SDIO_ICR_CMDSENTC;
+  sdcp->sdio->ICR = SDIO_ICR_CMDSENTC;
 }
 
 /**
@@ -582,19 +536,18 @@ bool sdc_lld_send_cmd_short(SDCDriver *sdcp, uint8_t cmd, uint32_t arg,
                             uint32_t *resp) {
   uint32_t sta;
 
-  (void)sdcp;
-
-  SDIO->ARG = arg;
-  SDIO->CMD = (uint32_t)cmd | SDIO_CMD_WAITRESP_0 | SDIO_CMD_CPSMEN;
-  while (((sta = SDIO->STA) & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT |
-                               SDIO_STA_CCRCFAIL)) == 0)
+  sdcp->sdio->ARG = arg;
+  sdcp->sdio->CMD = (uint32_t)cmd | SDIO_CMD_WAITRESP_0 | SDIO_CMD_CPSMEN;
+  while (((sta = sdcp->sdio->STA) & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT |
+                                     SDIO_STA_CCRCFAIL)) == 0)
     ;
-  SDIO->ICR = sta & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT | SDIO_STA_CCRCFAIL);
+  sdcp->sdio->ICR = sta & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT |
+                           SDIO_STA_CCRCFAIL);
   if ((sta & (SDIO_STA_CTIMEOUT)) != 0) {
     sdc_lld_collect_errors(sdcp, sta);
     return HAL_FAILED;
   }
-  *resp = SDIO->RESP1;
+  *resp = sdcp->sdio->RESP1;
   return HAL_SUCCESS;
 }
 
@@ -616,19 +569,17 @@ bool sdc_lld_send_cmd_short_crc(SDCDriver *sdcp, uint8_t cmd, uint32_t arg,
                                 uint32_t *resp) {
   uint32_t sta;
 
-  (void)sdcp;
-
-  SDIO->ARG = arg;
-  SDIO->CMD = (uint32_t)cmd | SDIO_CMD_WAITRESP_0 | SDIO_CMD_CPSMEN;
-  while (((sta = SDIO->STA) & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT |
-                               SDIO_STA_CCRCFAIL)) == 0)
+  sdcp->sdio->ARG = arg;
+  sdcp->sdio->CMD = (uint32_t)cmd | SDIO_CMD_WAITRESP_0 | SDIO_CMD_CPSMEN;
+  while (((sta = sdcp->sdio->STA) & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT |
+                                     SDIO_STA_CCRCFAIL)) == 0)
     ;
-  SDIO->ICR = sta & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT | SDIO_STA_CCRCFAIL);
+  sdcp->sdio->ICR = sta & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT | SDIO_STA_CCRCFAIL);
   if ((sta & (SDIO_STA_CTIMEOUT | SDIO_STA_CCRCFAIL)) != 0) {
     sdc_lld_collect_errors(sdcp, sta);
     return HAL_FAILED;
   }
-  *resp = SDIO->RESP1;
+  *resp = sdcp->sdio->RESP1;
   return HAL_SUCCESS;
 }
 
@@ -652,57 +603,24 @@ bool sdc_lld_send_cmd_long_crc(SDCDriver *sdcp, uint8_t cmd, uint32_t arg,
 
   (void)sdcp;
 
-  SDIO->ARG = arg;
-  SDIO->CMD = (uint32_t)cmd | SDIO_CMD_WAITRESP_0 | SDIO_CMD_WAITRESP_1 |
-                              SDIO_CMD_CPSMEN;
-  while (((sta = SDIO->STA) & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT |
-                               SDIO_STA_CCRCFAIL)) == 0)
+  sdcp->sdio->ARG = arg;
+  sdcp->sdio->CMD = (uint32_t)cmd | SDIO_CMD_WAITRESP_0 | SDIO_CMD_WAITRESP_1 |
+                                    SDIO_CMD_CPSMEN;
+  while (((sta = sdcp->sdio->STA) & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT |
+                                     SDIO_STA_CCRCFAIL)) == 0)
     ;
-  SDIO->ICR = sta & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT | SDIO_STA_CCRCFAIL);
+  sdcp->sdio->ICR = sta & (SDIO_STA_CMDREND | SDIO_STA_CTIMEOUT |
+                           SDIO_STA_CCRCFAIL);
   if ((sta & (STM32_SDIO_STA_ERROR_MASK)) != 0) {
     sdc_lld_collect_errors(sdcp, sta);
     return HAL_FAILED;
   }
   /* Save bytes in reverse order because MSB in response comes first.*/
-  *resp++ = SDIO->RESP4;
-  *resp++ = SDIO->RESP3;
-  *resp++ = SDIO->RESP2;
-  *resp   = SDIO->RESP1;
+  *resp++ = sdcp->sdio->RESP4;
+  *resp++ = sdcp->sdio->RESP3;
+  *resp++ = sdcp->sdio->RESP2;
+  *resp   = sdcp->sdio->RESP1;
   return HAL_SUCCESS;
-}
-
-/**
- * @brief   Reads one or more blocks.
- *
- * @param[in] sdcp      pointer to the @p SDCDriver object
- * @param[in] startblk  first block to read
- * @param[out] buf      pointer to the read buffer
- * @param[in] blocks    number of blocks to read
- *
- * @return              The operation status.
- * @retval HAL_SUCCESS  operation succeeded.
- * @retval HAL_FAILED   operation failed.
- *
- * @notapi
- */
-bool sdc_lld_read_aligned(SDCDriver *sdcp, uint32_t startblk,
-                          uint8_t *buf, uint32_t blocks) {
-  uint32_t resp[1];
-
-  if(sdc_lld_prepare_read_mcu_blocks(sdcp, buf, blocks))
-    goto error;
-
-  if (sdc_lld_prepare_read_card(sdcp, startblk, blocks, resp) == TRUE)
-    goto error;
-
-  if (sdc_lld_wait_transaction_end(sdcp, blocks, resp) == TRUE)
-    goto error;
-
-  return HAL_SUCCESS;
-
-error:
-  sdc_lld_error_cleanup(sdcp, blocks, resp);
-  return HAL_FAILED;
 }
 
 /**
@@ -725,7 +643,7 @@ bool sdc_lld_read_special(SDCDriver *sdcp, uint8_t *buf, size_t bytes,
                           uint8_t cmd, uint32_t arg) {
   uint32_t resp[1];
 
-  if(sdc_lld_prepare_read_mcu_bytes(sdcp, buf, bytes))
+  if(sdc_lld_prepare_read_bytes(sdcp, buf, bytes))
     goto error;
 
   if (sdc_lld_send_cmd_short_crc(sdcp, cmd, arg, resp)
@@ -739,6 +657,68 @@ bool sdc_lld_read_special(SDCDriver *sdcp, uint8_t *buf, size_t bytes,
 
 error:
   sdc_lld_error_cleanup(sdcp, 1, resp);
+  return HAL_FAILED;
+}
+
+/**
+ * @brief   Reads one or more blocks.
+ *
+ * @param[in] sdcp      pointer to the @p SDCDriver object
+ * @param[in] startblk  first block to read
+ * @param[out] buf      pointer to the read buffer
+ * @param[in] blocks    number of blocks to read
+ *
+ * @return              The operation status.
+ * @retval HAL_SUCCESS  operation succeeded.
+ * @retval HAL_FAILED   operation failed.
+ *
+ * @notapi
+ */
+bool sdc_lld_read_aligned(SDCDriver *sdcp, uint32_t startblk,
+                          uint8_t *buf, uint32_t blocks) {
+  uint32_t resp[1];
+
+  osalDbgCheck(blocks < 0x1000000 / MMCSD_BLOCK_SIZE);
+
+  sdcp->sdio->DTIMER = STM32_SDC_READ_TIMEOUT;
+
+  /* Checks for errors and waits for the card to be ready for reading.*/
+  if (_sdc_wait_for_transfer_state(sdcp))
+    return HAL_FAILED;
+
+  /* Prepares the DMA channel for writing.*/
+  dmaStreamSetMemory0(sdcp->dma, buf);
+  dmaStreamSetTransactionSize(sdcp->dma,
+                              (blocks * MMCSD_BLOCK_SIZE) / sizeof (uint32_t));
+  dmaStreamSetMode(sdcp->dma, sdcp->dmamode | STM32_DMA_CR_DIR_P2M);
+  dmaStreamEnable(sdcp->dma);
+
+  /* Setting up data transfer.*/
+  sdcp->sdio->ICR   = STM32_SDIO_ICR_ALL_FLAGS;
+  sdcp->sdio->MASK  = SDIO_MASK_DCRCFAILIE |
+                      SDIO_MASK_DTIMEOUTIE |
+                      SDIO_MASK_STBITERRIE |
+                      SDIO_MASK_RXOVERRIE |
+                      SDIO_MASK_DATAENDIE;
+  sdcp->sdio->DLEN  = blocks * MMCSD_BLOCK_SIZE;
+
+  /* Transaction starts just after DTEN bit setting.*/
+  sdcp->sdio->DCTRL = SDIO_DCTRL_DTDIR |
+                      SDIO_DCTRL_DBLOCKSIZE_3 |
+                      SDIO_DCTRL_DBLOCKSIZE_0 |
+                      SDIO_DCTRL_DMAEN |
+                      SDIO_DCTRL_DTEN;
+
+  if (sdc_lld_prepare_read(sdcp, startblk, blocks, resp) == TRUE)
+    goto error;
+
+  if (sdc_lld_wait_transaction_end(sdcp, blocks, resp) == TRUE)
+    goto error;
+
+  return HAL_SUCCESS;
+
+error:
+  sdc_lld_error_cleanup(sdcp, blocks, resp);
   return HAL_FAILED;
 }
 
@@ -762,7 +742,7 @@ bool sdc_lld_write_aligned(SDCDriver *sdcp, uint32_t startblk,
 
   osalDbgCheck(blocks < 0x1000000 / MMCSD_BLOCK_SIZE);
 
-  SDIO->DTIMER = STM32_SDC_WRITE_TIMEOUT;
+  sdcp->sdio->DTIMER = STM32_SDC_WRITE_TIMEOUT;
 
   /* Checks for errors and waits for the card to be ready for writing.*/
   if (_sdc_wait_for_transfer_state(sdcp))
@@ -776,23 +756,24 @@ bool sdc_lld_write_aligned(SDCDriver *sdcp, uint32_t startblk,
   dmaStreamEnable(sdcp->dma);
 
   /* Setting up data transfer.*/
-  SDIO->ICR   = STM32_SDIO_ICR_ALL_FLAGS;
-  SDIO->MASK  = SDIO_MASK_DCRCFAILIE |
-                SDIO_MASK_DTIMEOUTIE |
-                SDIO_MASK_STBITERRIE |
-                SDIO_MASK_TXUNDERRIE |
-                SDIO_MASK_DATAENDIE;
-  SDIO->DLEN  = blocks * MMCSD_BLOCK_SIZE;
+  sdcp->sdio->ICR   = STM32_SDIO_ICR_ALL_FLAGS;
+  sdcp->sdio->MASK  = SDIO_MASK_DCRCFAILIE |
+                      SDIO_MASK_DTIMEOUTIE |
+                      SDIO_MASK_STBITERRIE |
+                      SDIO_MASK_TXUNDERRIE |
+                      SDIO_MASK_DATAENDIE;
+  sdcp->sdio->DLEN  = blocks * MMCSD_BLOCK_SIZE;
 
   /* Talk to card what we want from it.*/
   if (sdc_lld_prepare_write(sdcp, startblk, blocks, resp) == TRUE)
     goto error;
 
   /* Transaction starts just after DTEN bit setting.*/
-  SDIO->DCTRL = SDIO_DCTRL_DBLOCKSIZE_3 |
-                SDIO_DCTRL_DBLOCKSIZE_0 |
-                SDIO_DCTRL_DMAEN |
-                SDIO_DCTRL_DTEN;
+  sdcp->sdio->DCTRL = SDIO_DCTRL_DBLOCKSIZE_3 |
+                      SDIO_DCTRL_DBLOCKSIZE_0 |
+                      SDIO_DCTRL_DMAEN |
+                      SDIO_DCTRL_DTEN;
+
   if (sdc_lld_wait_transaction_end(sdcp, blocks, resp) == TRUE)
     goto error;
 

@@ -14,6 +14,9 @@
     limitations under the License.
 */
 
+#ifndef _MCUCONF_H_
+#define _MCUCONF_H_
+
 /*
  * STM32F0xx drivers configuration.
  * The following settings override the default settings present in
@@ -96,6 +99,7 @@
 #define STM32_I2C_BUSY_TIMEOUT              50
 #define STM32_I2C_I2C1_IRQ_PRIORITY         3
 #define STM32_I2C_I2C2_IRQ_PRIORITY         3
+#define STM32_I2C_USE_DMA                   TRUE
 #define STM32_I2C_I2C1_DMA_PRIORITY         1
 #define STM32_I2C_I2C2_DMA_PRIORITY         1
 #define STM32_I2C_DMA_ERROR_HOOK(i2cp)      osalSysHalt("DMA failure")
@@ -163,3 +167,5 @@
 #define STM32_USB_USE_USB1                  TRUE
 #define STM32_USB_LOW_POWER_ON_SUSPEND      FALSE
 #define STM32_USB_USB1_LP_IRQ_PRIORITY      3
+
+#endif /* _MCUCONF_H_ */

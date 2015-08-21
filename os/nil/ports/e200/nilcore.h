@@ -106,6 +106,21 @@
 #define PORT_USE_ALT_TIMER              FALSE
 #endif
 
+/**
+ * @brief   Use VLE instruction set.
+ * @note    This parameter is usually set in the Makefile.
+ */
+#if !defined(PPC_USE_VLE) || defined(__DOXYGEN__)
+#define PPC_USE_VLE                     TRUE
+#endif
+
+/**
+ * @brief   Enables the use of the @p WFI instruction.
+ */
+#if !defined(PPC_ENABLE_WFI_IDLE) || defined(__DOXYGEN__)
+#define PPC_ENABLE_WFI_IDLE             FALSE
+#endif
+
 /*===========================================================================*/
 /* Derived constants and error checks.                                       */
 /*===========================================================================*/
@@ -288,6 +303,18 @@ struct port_intctx {
  *          port implementation.
  */
 #define PORT_FAST_IRQ_HANDLER(id) void id(void)
+
+/**
+ * @brief   Priority level verification macro.
+ */
+#define PORT_IRQ_IS_VALID_PRIORITY(n)                                       \
+  (((n) >= 0U) && ((n) < INTC_PRIORITY_LEVELS))
+
+/**
+ * @brief   Priority level verification macro.
+ */
+#define PORT_IRQ_IS_VALID_KERNEL_PRIORITY(n)                                \
+    (((n) >= 0U) && ((n) < INTC_PRIORITY_LEVELS))
 
 /**
  * @brief   Performs a context switch between two threads.

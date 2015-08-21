@@ -32,6 +32,12 @@
 /* Driver exported variables.                                                */
 /*===========================================================================*/
 
+/**
+ * @brief   CMSIS system core clock variable.
+ * @note    It is declared in system_stm32f4xx.h.
+ */
+uint32_t SystemCoreClock = STM32_SYSCLK;
+
 /*===========================================================================*/
 /* Driver local variables and types.                                         */
 /*===========================================================================*/
@@ -223,6 +229,17 @@ void stm32_clock_init(void) {
 
   /* Waiting for PLL lock.*/
   while (!(RCC->CR & RCC_CR_PLLI2SRDY))
+    ;
+#endif
+
+#if STM32_ACTIVATE_PLLSAI
+  /* PLLSAI activation.*/
+  RCC->PLLSAICFGR = STM32_PLLSAIN | STM32_PLLSAIR | STM32_PLLSAIQ;
+  RCC->DCKCFGR = (RCC->DCKCFGR & ~RCC_DCKCFGR_PLLSAIDIVR) | STM32_PLLSAIR_POST;
+  RCC->CR |= RCC_CR_PLLSAION;
+
+  /* Waiting for PLL lock.*/
+  while (!(RCC->CR & RCC_CR_PLLSAIRDY))
     ;
 #endif
 

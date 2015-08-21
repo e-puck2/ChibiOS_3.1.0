@@ -123,22 +123,20 @@ static void mii_find_phy(MACDriver *macp) {
   uint32_t i;
 
 #if STM32_MAC_PHY_TIMEOUT > 0
-  rtcnt_t start = chSysGetRealtimeCounterX();
-  rtcnt_t timeout  = start + MS2RTC(STM32_HCLK,STM32_MAC_PHY_TIMEOUT);
-  rtcnt_t time = start;
-  while (chSysIsCounterWithinX(time, start, timeout)) {
+  unsigned n = STM32_MAC_PHY_TIMEOUT;
+ do {
 #endif
-    for (i = 0; i < 31; i++) {
-      macp->phyaddr = i << 11;
-      ETH->MACMIIDR = (i << 6) | MACMIIDR_CR;
-      if ((mii_read(macp, MII_PHYSID1) == (BOARD_PHY_ID >> 16)) &&
-          ((mii_read(macp, MII_PHYSID2) & 0xFFF0) == (BOARD_PHY_ID & 0xFFF0))) {
+    for (i = 0U; i < 31U; i++) {
+      macp->phyaddr = i << 11U;
+      ETH->MACMIIDR = (i << 6U) | MACMIIDR_CR;
+      if ((mii_read(macp, MII_PHYSID1) == (BOARD_PHY_ID >> 16U)) &&
+          ((mii_read(macp, MII_PHYSID2) & 0xFFF0U) == (BOARD_PHY_ID & 0xFFF0U))) {
         return;
       }
     }
 #if STM32_MAC_PHY_TIMEOUT > 0
-    time = chSysGetRealtimeCounterX();
-  }
+    n--;
+  } while (n > 0U);
 #endif
   /* Wrong or defective board.*/
   osalSysHalt("MAC failure");
@@ -175,7 +173,7 @@ static void mac_lld_set_address(const uint8_t *p) {
 /* Driver interrupt handlers.                                                */
 /*===========================================================================*/
 
-OSAL_IRQ_HANDLER(ETH_IRQHandler) {
+OSAL_IRQ_HANDLER(STM32_ETH_HANDLER) {
   uint32_t dmasr;
 
   OSAL_IRQ_PROLOGUE();
@@ -310,7 +308,7 @@ void mac_lld_start(MACDriver *macp) {
 #endif
 
   /* ISR vector enabled.*/
-  nvicEnableVector(ETH_IRQn, STM32_MAC_ETH1_IRQ_PRIORITY);
+  nvicEnableVector(STM32_ETH_NUMBER, STM32_MAC_ETH1_IRQ_PRIORITY);
 
 #if STM32_MAC_ETH1_CHANGE_PHY_STATE
   /* PHY in power up mode.*/
@@ -384,7 +382,7 @@ void mac_lld_stop(MACDriver *macp) {
     rccDisableETH(false);
 
     /* ISR vector disabled.*/
-    nvicDisableVector(ETH_IRQn);
+    nvicDisableVector(STM32_ETH_NUMBER);
   }
 }
 

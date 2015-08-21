@@ -37,14 +37,19 @@
 #define _CHIBIOS_RT_
 
 /**
- * @brief   Kernel version string.
+ * @brief   Stable release flag.
  */
-#define CH_KERNEL_VERSION       "3.0.0dev"
+#define CH_KERNEL_STABLE        1
 
 /**
- * @name    Kernel version
+ * @name    ChibiOS/RT version identification
  * @{
  */
+/**
+ * @brief   Kernel version string.
+ */
+#define CH_KERNEL_VERSION       "3.0.0"
+
 /**
  * @brief   Kernel version major number.
  */
@@ -58,7 +63,7 @@
 /**
  * @brief   Kernel version patch number.
  */
-#define CH_KERNEL_PATCH         0
+#define CH_KERNEL_PATCH         1
 /** @} */
 
 /* Core headers.*/
